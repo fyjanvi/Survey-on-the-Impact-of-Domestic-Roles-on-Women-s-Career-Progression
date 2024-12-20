@@ -1,0 +1,281 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix, classification_report, accuracy_score
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+from sklearn.svm import SVC
+from sklearn.utils import class_weight
+from textblob import TextBlob
+from sklearn.feature_extraction.text import TfidfVectorizer
+from nltk.corpus import stopwords
+import nltk
+from wordcloud import WordCloud
+
+st.set_page_config(
+    page_title="Women’s Careers & Domestic Roles: Impact Survey",
+    page_icon=":bar_chart:",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# Function to load CSS file
+def load_css():
+    with open("app.css") as f:
+        css = f.read()
+    st.markdown(f'<style>{css}</style>', unsafe_allow_html=True)
+
+load_css()
+
+
+# Configure Streamlit Theme
+
+# Streamlit UI Header
+st.title("Survey on Impact of Domestic Roles on Women's Career Progression")
+st.markdown(
+    """
+    Welcome to the analysis of how domestic responsibilities affect women's career progression. 
+    Use the sidebar to navigate through different insights and analyses.
+    """
+)
+st.sidebar.header("")
+
+
+# File uploader
+uploaded_file = st.sidebar.file_uploader("Upload CSV", type=['csv'])
+
+if uploaded_file is not None:
+    # Check if the uploaded file is a CSV
+    try:
+        data = pd.read_csv(uploaded_file)
+
+        # Display the contents of the uploaded CSV file
+        st.subheader("Contents of the CSV File")
+        st.write(data)
+
+        data = data[data['Gender'] == 'Female']
+    # Convert categorical variables to numerical, ensuring all mappings are correct
+        data['Have you taken a career break for family reasons?'] = data['Have you taken a career break for family reasons?'].map({
+            'Yes': 1,
+            'No': 0
+        })
+
+        # Convert other categorical columns as needed
+        data['Average hours spent on household chores per week'] = data['Average hours spent on household chores per week'].map({
+            'Less than 5 hours': 0,
+            '5-10 hours': 1,
+            '10-20 hours': 2,
+            'More than 20 hours': 3
+        })
+
+        data['Average hours spent at work per week'] = data['Average hours spent at work per week'].map({
+            'Less than 30 hours': 0,
+            '30-40 hours': 1,
+            '40-50 hours': 2,
+            'More than 50 hours': 3
+        })
+
+        data['Marital status '] = data['Marital status '].map({
+            'Single': 0,
+            'Married': 1
+        })
+
+        data['Primary person responsible for household chores'] = data['Primary person responsible for household chores'].map({
+            'Self': 0,
+            'Partner': 1,
+            'Equally shared': 2,
+            'Hired help': 3,
+            'Family member': 4
+        })
+
+        data['Availability of external support (eg. Hired help, family members)'] = data['Availability of external support (eg. Hired help, family members)'].map({
+            'Always': 0,
+            'Sometimes': 1,
+            'Rarely': 2,
+            'Never': 3
+        })
+
+        data['Current position in your career'] = data['Current position in your career'].map({
+            'Entry level': 0,
+            'Mid level': 1,
+            'Senior level': 2,
+            'Executive level': 3
+        })
+
+        data['Availability of flexible working hours at your job'] = data['Availability of flexible working hours at your job'].map({
+            'Yes': 1,
+            'No': 0
+        })
+
+        # Map 'Impact on career progression' to binary values
+        data['Impact on career progression'] = data['How have your household responsibilities impacted your career progression and opportunities for advancement?'].map({
+            'Significantly hindered my career progression': 1,
+            'Somewhat hindered my career progression': 1,
+            'No impact on my career progression': 0,
+            'Somewhat supported my career progression': 0,
+            'Significantly supported my career progression': 0
+        })
+
+        # Drop rows with missing values in the relevant columns
+        data.dropna(subset=['Impact on career progression',
+                            'Average hours spent on household chores per week',
+                            'Average hours spent at work per week',
+                            'Marital status ',
+                            'Primary person responsible for household chores',
+                            'Availability of external support (eg. Hired help, family members)',
+                            'Current position in your career',
+                            'Availability of flexible working hours at your job'], inplace=True)
+
+        # Define feature and target variables for Random Forest model
+        X = data[['Average hours spent on household chores per week',
+                'Average hours spent at work per week',
+                'Marital status ',
+                'Primary person responsible for household chores',
+                'Availability of external support (eg. Hired help, family members)',
+                'Current position in your career',
+                'Availability of flexible working hours at your job']]
+        y = data['Impact on career progression']
+
+        # Split the data into training and testing sets
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+        # Initialize and train the Random Forest model
+        model = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')  # Set class_weight during initialization
+        model.fit(X_train, y_train)
+
+        # Feature scaling
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
+
+        # Train the SVC model with class_weight
+        svm_model = SVC(kernel='linear', C=1, class_weight='balanced')  # Set class_weight during initialization
+        svm_model.fit(X_train_scaled, y_train)  # Fitting without class_weight
+
+        # Predict on the test set
+        y_pred = svm_model.predict(X_test_scaled)
+        y_pred_proba = model.predict_proba(X_test)[:, 1]  # Make sure to use X_test here for RandomForest
+        y_pred_adjusted = (y_pred_proba >= 0.3)  # Adjust the threshold as needed
+
+        # Evaluation metrics
+        accuracy = accuracy_score(y_test, y_pred)
+        classification_rep = classification_report(y_test, y_pred)
+        confusion_mat = confusion_matrix(y_test, y_pred)
+
+
+        # Button to show Feature Importance
+        if st.sidebar.button("Analyze Feature Importance"):
+            # Get feature importances
+            feature_importances = model.feature_importances_
+            features = X.columns
+
+            # Plotting feature importance
+            plt.figure(figsize=(12, 8))
+            plt.barh(features, feature_importances, color='skyblue')
+            plt.xlabel('Feature Importance')
+            plt.title('Key Influencers on Career Impact')
+            plt.grid(axis='x')
+
+            # Show the plot in Streamlit
+            st.pyplot(plt)
+
+        # Button to show Clustering and Confusion Matrix Graphs
+        if st.sidebar.button("Predict Impact"):
+    # Make predictions on the test set
+            st.write("Accuracy:", accuracy)
+            # st.write("Classification Report:\n", classification_rep)
+
+    # Plot confusion matrix
+            plt.figure(figsize=(8, 6))
+            sns.heatmap(confusion_mat, annot=True, fmt='d', cmap='Blues', cbar=False, xticklabels=['No Impact', 'Significant Impact'], yticklabels=['No Impact', 'Significant Impact'])
+            plt.xlabel('Predicted Label')
+            plt.ylabel('True Label')
+            plt.title('Prediction of Career Impact')
+            st.pyplot(plt)
+        # Button for Sentiment Analysis
+        if st.sidebar.button("Analyze Sentiment Distribution"):
+            # Define the column for sentiment analysis
+            column_name = 'What changes, if any, would you like to see in workplace policies to better support women balancing career and domestic responsibilities?'
+
+            # Convert non-string entries to strings and handle missing values
+            data[column_name] = data[column_name].astype(str).fillna('')
+
+            # Function to analyze sentiment
+            def analyze_sentiment(text):
+                analysis = TextBlob(text)
+                return analysis.sentiment.polarity  # Polarity ranges from -1 (negative) to 1 (positive)
+
+            # Apply sentiment analysis to the specified column
+            data['Sentiment Score'] = data[column_name].apply(analyze_sentiment)
+
+            # Plot histogram of sentiment scores
+            plt.figure(figsize=(10, 6))
+            plt.hist(data['Sentiment Score'], bins=20, color='skyblue', edgecolor='black')
+            plt.title('Sentiment Overview of Workplace Policy Change Suggestions')
+            plt.xlabel('Sentiment Score')
+            plt.ylabel('Frequency')
+            plt.grid(True)
+
+            # Show the plot in Streamlit
+            st.pyplot(plt)
+
+        if st.sidebar.button("Identify Common Policy Change Requests"):
+            # Preprocess text: Remove NaN values and lowercase all text
+            responses = data['What changes, if any, would you like to see in workplace policies to better support women balancing career and domestic responsibilities?'].dropna().str.lower()
+
+            # Define stopwords
+            stop_words = set(stopwords.words('english'))
+
+            # Function to preprocess text data
+            def preprocess_text(text):
+                text = ''.join([char for char in text if char.isalpha() or char.isspace()])
+                text = ' '.join([word for word in text.split() if word not in stop_words])
+                return text
+
+            # Apply preprocessing
+            responses = responses.apply(preprocess_text)
+
+            # Vectorize the text data
+            vectorizer = TfidfVectorizer(max_features=1000)
+            X = vectorizer.fit_transform(responses)
+
+            # Plot word frequency distribution
+            word_freq = pd.Series(' '.join(responses).split()).value_counts()
+
+            plt.figure(figsize=(12, 8))
+            sns.barplot(x=word_freq.head(20).index, y=word_freq.head(20).values)
+            plt.xticks(rotation=45)
+            plt.title('Top Policy Change Requests')
+            plt.xlabel('Words')
+            plt.ylabel('Frequency')
+
+            # Show the plot in Streamlit
+            st.pyplot(plt)
+
+        # Button to show challenges faced in career
+        if st.sidebar.button('View Challenges in Career'):
+            st.image('cf.png', use_column_width=True)
+
+        # Button to show ideal balance
+        if st.sidebar.button('Visualize Ideal Work-Life Balance'):
+            st.image('ideal.png', use_column_width=True)
+
+        # Button for showing flexible work hours pie chart
+        if st.sidebar.button("Show Flexible Work Hours"):
+            st.image('fw.png', use_column_width=True)
+
+        # Button for showing external support analysis
+        if st.sidebar.button("Analyze External Support Availability"):
+            st.image('es.png', use_column_width=True)
+    except Exception as e:
+        st.sidebar.error(f"Invalid file format or encoding issue! Please upload a valid CSV file. Error: {e}")
+
+else:
+    st.sidebar.info("Please upload a CSV file to proceed.")
+ 
